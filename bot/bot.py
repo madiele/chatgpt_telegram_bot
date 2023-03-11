@@ -186,11 +186,18 @@ async def pdf_message_handle(update: Update, context: CallbackContext):
         await pdf_file.download_to_drive(pdf_path)
         pages_to_summarize, tokens_in_pdf = pdf_summarizer.pdf_to_string_array(pdf_path)
 
-        if tokens_in_pdf > 10000:
-            await update.message.reply_text('pdf is too big, request would be too expensive')
+        if tokens_in_pdf > 20000:
+            await update.message.reply_text(
+                'pdf is too big (' + tokens_in_pdf + ' tokens), request would be too expensive')
             return
 
-        summary = await summarize_recursive(user_id, pages_to_summarize)
+        await update.message.reply_text('I\'m summarizing your pdf please wait; this pdf summary will cost at least ' +
+                                        str(round((config.chatgpt_price_per_1000_tokens * (tokens_in_pdf // 1000)) * 100)/100) + '$')
+
+        if len(pages_to_summarize) > 1:
+            summary = await summarize_recursive(user_id, pages_to_summarize)
+        else:
+            summary = await summarize_text(user_id, pages_to_summarize[0], "")
 
         chat_mode = 'summarizer'
         for answer_chunk in split_text_into_chunks(summary, 4000):
