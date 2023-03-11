@@ -8,6 +8,7 @@ def pdf_to_string_array(pdf_path):
         pdf_reader = PyPDF2.PdfReader(pdf_file)
 
         num_pages = len(pdf_reader.pages)
+        total_tokens_in_pdf = 0
 
         strings = []
 
@@ -21,11 +22,15 @@ def pdf_to_string_array(pdf_path):
             for word in words:
                 current_string += word + " "
 
-                if (len(encoding.encode(current_string))) >= 1500:
+                tokens_in_string = len(encoding.encode(current_string))
+                if tokens_in_string >= 1500:
                     strings.append(current_string.strip())
+                    total_tokens_in_pdf += tokens_in_string
                     current_string = ""
 
             if current_string != "":
+                tokens_in_string = len(encoding.encode(current_string))
+                total_tokens_in_pdf += tokens_in_string
                 strings.append(current_string.strip())
-    # Print the list of strings
-    return strings
+
+    return strings, total_tokens_in_pdf

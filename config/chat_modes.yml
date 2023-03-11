@@ -10,7 +10,7 @@ summarizer:
   name: text summarizer
   welcome_message: 👩🏼‍🎓 Hi, I'm <b>ChatGPT text summarizer</b>. give me a text to summarize
   prompt_start: |
-    the user will give you a text to summarize of no more than 1000 words, you will do so without making any comments on the subject
+    the user will give you a text to summarize, you will do so without making any comments on the subject, don't leave important details out
   parse_mode: html
 
 code_assistant:

@@ -184,8 +184,11 @@ async def pdf_message_handle(update: Update, context: CallbackContext):
         # download
         pdf_file = await context.bot.get_file(pdf.file_id)
         await pdf_file.download_to_drive(pdf_path)
-        pages_to_summarize = pdf_summarizer.pdf_to_string_array(pdf_path)
-        print(pages_to_summarize)
+        pages_to_summarize, tokens_in_pdf = pdf_summarizer.pdf_to_string_array(pdf_path)
+
+        if tokens_in_pdf > 10000:
+            await update.message.reply_text('pdf is too big, request would be too expensive')
+            return
 
         summary = await summarize_recursive(user_id, pages_to_summarize)
 
