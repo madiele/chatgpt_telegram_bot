@@ -23,7 +23,7 @@ from telegram.constants import ParseMode, ChatAction
 import config
 import database
 import openai_utils
-
+import pdf_summarizer
 
 # setup
 db = database.Database()
@@ -50,7 +50,7 @@ async def register_user_if_not_exists(update: Update, context: CallbackContext, 
             update.message.chat_id,
             username=user.username,
             first_name=user.first_name,
-            last_name= user.last_name
+            last_name=user.last_name
         )
         db.start_new_dialog(user.id)
 
@@ -61,15 +61,15 @@ async def register_user_if_not_exists(update: Update, context: CallbackContext, 
 async def start_handle(update: Update, context: CallbackContext):
     await register_user_if_not_exists(update, context, update.message.from_user)
     user_id = update.message.from_user.id
-    
+
     db.set_user_attribute(user_id, "last_interaction", datetime.now())
     db.start_new_dialog(user_id)
-    
+
     reply_text = "Hi! I'm <b>ChatGPT</b> bot implemented with GPT-3.5 OpenAI API 🤖\n\n"
     reply_text += HELP_MESSAGE
 
     reply_text += "\nAnd now... ask me anything!"
-    
+
     await update.message.reply_text(reply_text, parse_mode=ParseMode.HTML)
 
 
@@ -101,16 +101,20 @@ async def message_handle(update: Update, context: CallbackContext, message=None,
     if update.edited_message is not None:
         await edited_message_handle(update, context)
         return
-        
+
     await register_user_if_not_exists(update, context, update.message.from_user)
     user_id = update.message.from_user.id
     chat_mode = db.get_user_attribute(user_id, "current_chat_mode")
 
     # new dialog timeout
     if use_new_dialog_timeout:
-        if (datetime.now() - db.get_user_attribute(user_id, "last_interaction")).seconds > config.new_dialog_timeout and len(db.get_dialog_messages(user_id)) > 0:
+        if (datetime.now() - db.get_user_attribute(user_id,
+                                                   "last_interaction")).seconds > config.new_dialog_timeout and len(
+            db.get_dialog_messages(user_id)) > 0:
             db.start_new_dialog(user_id)
-            await update.message.reply_text(f"Starting new dialog due to timeout (<b>{openai_utils.CHAT_MODES[chat_mode]['name']}</b> mode) ✅", parse_mode=ParseMode.HTML)
+            await update.message.reply_text(
+                f"Starting new dialog due to timeout (<b>{openai_utils.CHAT_MODES[chat_mode]['name']}</b> mode) ✅",
+                parse_mode=ParseMode.HTML)
     db.set_user_attribute(user_id, "last_interaction", datetime.now())
 
     # send typing action
@@ -160,11 +164,72 @@ async def message_handle(update: Update, context: CallbackContext, message=None,
                 "html": ParseMode.HTML,
                 "markdown": ParseMode.MARKDOWN
             }[openai_utils.CHAT_MODES[chat_mode]["parse_mode"]]
-            
+
             await update.message.reply_text(answer_chunk, parse_mode=parse_mode)
         except telegram.error.BadRequest:
             # answer has invalid characters, so we send it without parse_mode
             await update.message.reply_text(answer_chunk)
+
+
+async def pdf_message_handle(update: Update, context: CallbackContext):
+    await register_user_if_not_exists(update, context, update.message.from_user)
+    user_id = update.message.from_user.id
+    db.set_user_attribute(user_id, "last_interaction", datetime.now())
+
+    pdf = update.message.document
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_dir = Path(tmp_dir)
+        pdf_path = tmp_dir / "chatgpt.pdf"
+
+        # download
+        pdf_file = await context.bot.get_file(pdf.file_id)
+        await pdf_file.download_to_drive(pdf_path)
+        pages_to_summarize = pdf_summarizer.pdf_to_string_array(pdf_path)
+        print(pages_to_summarize)
+
+        summary = await summarize_recursive(user_id, pages_to_summarize)
+
+        chat_mode = 'summarizer'
+        for answer_chunk in split_text_into_chunks(summary, 4000):
+            try:
+                parse_mode = {
+                    "html": ParseMode.HTML,
+                    "markdown": ParseMode.MARKDOWN
+                }[openai_utils.CHAT_MODES[chat_mode]["parse_mode"]]
+
+                await update.message.reply_text(answer_chunk, parse_mode=parse_mode)
+            except telegram.error.BadRequest:
+                # answer has invalid characters, so we send it without parse_mode
+                await update.message.reply_text(answer_chunk)
+
+
+async def summarize_recursive(user_id, array_to_summarize):
+    if len(array_to_summarize) == 1:
+        return array_to_summarize[0]
+
+    if len(array_to_summarize) == 2:
+        return await summarize_text(user_id, array_to_summarize[0], array_to_summarize[1])
+
+    if len(array_to_summarize) > 2:
+        text1 = await summarize_recursive(user_id, array_to_summarize[: len(array_to_summarize) // 2])
+        text2 = await summarize_recursive(user_id, array_to_summarize[len(array_to_summarize) // 2:])
+        return await summarize_text(user_id, text1, text2)
+
+
+async def summarize_text(user_id: int, text1: str, text2: str):
+    message = text1 + text2
+    db.start_new_dialog(user_id)
+    dialog_messages = db.get_dialog_messages(user_id, dialog_id=None)
+    chat_mode = 'summarizer'
+
+    chatgpt_instance = openai_utils.ChatGPT(use_chatgpt_api=config.use_chatgpt_api)
+    answer, n_used_tokens, n_first_dialog_messages_removed = await chatgpt_instance.send_message(
+        message,
+        dialog_messages=dialog_messages,
+        chat_mode=chat_mode
+    )
+
+    return answer
 
 
 async def voice_message_handle(update: Update, context: CallbackContext):
@@ -212,7 +277,8 @@ async def new_dialog_handle(update: Update, context: CallbackContext):
     await update.message.reply_text("Starting new dialog ✅")
 
     chat_mode = db.get_user_attribute(user_id, "current_chat_mode")
-    await update.message.reply_text(f"{openai_utils.CHAT_MODES[chat_mode]['welcome_message']}", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(f"{openai_utils.CHAT_MODES[chat_mode]['welcome_message']}",
+                                    parse_mode=ParseMode.HTML)
 
 
 async def show_chat_modes_handle(update: Update, context: CallbackContext):
@@ -299,6 +365,7 @@ async def error_handle(update: Update, context: CallbackContext) -> None:
     except:
         await context.bot.send_message(update.effective_chat.id, "Some error in error handler")
 
+
 def run_bot() -> None:
     application = (
         ApplicationBuilder()
@@ -321,14 +388,15 @@ def run_bot() -> None:
     application.add_handler(CommandHandler("new", new_dialog_handle, filters=user_filter))
 
     application.add_handler(MessageHandler(filters.VOICE & user_filter, voice_message_handle))
-    
+    application.add_handler(MessageHandler(filters.ATTACHMENT & user_filter, pdf_message_handle))
+
     application.add_handler(CommandHandler("mode", show_chat_modes_handle, filters=user_filter))
     application.add_handler(CallbackQueryHandler(set_chat_mode_handle, pattern="^set_chat_mode"))
 
     application.add_handler(CommandHandler("balance", show_balance_handle, filters=user_filter))
-    
+
     application.add_error_handler(error_handle)
-    
+
     # start the bot
     application.run_polling()
 

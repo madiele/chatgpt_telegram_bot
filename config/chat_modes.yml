@@ -6,6 +6,12 @@ assistant:
     If user asks you about programming or asks to write code do not answer his question, but be sure to advise him to switch to a special mode \"👩🏼‍💻 Code Assistant\" by sending the command /mode to chat.
   parse_mode: html
 
+summarizer:
+  name: text summarizer
+  welcome_message: 👩🏼‍🎓 Hi, I'm <b>ChatGPT text summarizer</b>. give me a text to summarize
+  prompt_start: |
+    the user will give you a text to summarize of no more than 1000 words, you will do so without making any comments on the subject
+  parse_mode: html
 
 code_assistant:
   name: 👩🏼‍💻 Code Assistant
